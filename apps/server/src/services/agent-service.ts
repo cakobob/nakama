@@ -80,6 +80,7 @@ import type {
   StartTelegramPairingRequest,
   SuggestToolParamsResponse,
   SyncSkillsResponse,
+  TelegramAccessRequestsResponse,
   TelegramPairingStartResponse,
   TelegramPairingStatusResponse,
   TelegramSettingsResponse,
@@ -150,12 +151,14 @@ import {
   isProviderConfigured,
   isWritableSoulFileKey,
   listArtifacts,
+  listTelegramAccessRequests,
   loadComposioSettingsPublic,
   loadDiscordSettingsPublic,
   loadEmailConfig,
   loadEmailSettingsPublic,
   loadErrorTrackingSettingsPublic,
   loadSoulStack,
+  loadTelegramConfigFile,
   loadTelegramSettingsPublic,
   loadUserConfig,
   loadUserThinkingSettings,
@@ -185,6 +188,7 @@ import {
   regenerateWhatsAppPairingCode,
   rehydrateMessagesForProvider as rehydrateAttachmentMessages,
   rehydrateAttachmentRefsInContent,
+  removeTelegramAccessRequest,
   replaceImagePartsWithDescriptions,
   resolveDiscordApplicationId,
   resolveOllamaHostMode,
@@ -1340,6 +1344,122 @@ export class AgentService {
     );
 
     return settings;
+  }
+
+  async getTelegramAccessRequests(
+    orgId: ChannelConfigScope
+  ): Promise<TelegramAccessRequestsResponse> {
+    return {
+      ...(await this.resolveTelegramUsernames(orgId)),
+      requests: await listTelegramAccessRequests(orgId),
+    };
+  }
+
+  private readonly telegramUsernames = new Map<
+    string,
+    { at: number; username: string | null }
+  >();
+
+  private async fetchTelegramUsername(
+    token: string,
+    method: "getChat" | "getMe",
+    chatId?: number
+  ): Promise<string | null> {
+    try {
+      const path = [`bot${token}`, method].map(encodeURIComponent).join("/");
+      const query = chatId === undefined ? "" : `?chat_id=${chatId}`;
+
+      const response = await fetch(`https://api.telegram.org/${path}${query}`, {
+        signal: AbortSignal.timeout(5000),
+      });
+
+      const payload = z
+        .object({ result: z.object({ username: z.string().optional() }) })
+        .parse(await response.json());
+
+      return payload.result.username ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Telegram only reveals a username to a bot once that user has messaged it. */
+  private async resolveTelegramUsername(
+    token: string,
+    userId?: number
+  ): Promise<string | null> {
+    const key = `${token}:${userId ?? "bot"}`;
+    const cached = this.telegramUsernames.get(key);
+
+    if (cached && (cached.username || Date.now() - cached.at < 600_000)) {
+      return cached.username;
+    }
+
+    const username = await this.fetchTelegramUsername(
+      token,
+      userId === undefined ? "getMe" : "getChat",
+      userId
+    );
+
+    this.telegramUsernames.set(key, { at: Date.now(), username });
+
+    return username;
+  }
+
+  private async resolveTelegramUsernames(orgId: ChannelConfigScope): Promise<{
+    allowedUsernames: Record<string, string>;
+    botUsername: string | null;
+  }> {
+    const config = await loadTelegramConfigFile(orgId);
+    const token = config?.botToken.trim();
+
+    if (!(config && token)) {
+      return { allowedUsernames: {}, botUsername: null };
+    }
+
+    const ids = [
+      ...new Set([...config.allowedUserIds, ...config.pairedUserIds]),
+    ];
+
+    const entries = await Promise.all(
+      ids.map(async (id) => [
+        String(id),
+        await this.resolveTelegramUsername(token, id),
+      ])
+    );
+
+    return {
+      allowedUsernames: Object.fromEntries(
+        entries.filter((entry): entry is [string, string] => entry[1] !== null)
+      ),
+      botUsername: await this.resolveTelegramUsername(token),
+    };
+  }
+
+  async approveTelegramAccessRequest(
+    orgId: ChannelConfigScope,
+    userId: number
+  ): Promise<TelegramSettingsResponse> {
+    const existing = await loadTelegramSettingsPublic(orgId);
+
+    const settings = await this.setTelegramSettings(orgId, {
+      allowedUserIds: [...new Set([...existing.allowedUserIds, userId])].join(
+        ","
+      ),
+    });
+
+    await removeTelegramAccessRequest(orgId, userId);
+
+    return settings;
+  }
+
+  async denyTelegramAccessRequest(
+    orgId: ChannelConfigScope,
+    userId: number
+  ): Promise<TelegramAccessRequestsResponse> {
+    await removeTelegramAccessRequest(orgId, userId);
+
+    return this.getTelegramAccessRequests(orgId);
   }
 
   async regenerateTelegramHandshake(

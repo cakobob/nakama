@@ -1613,6 +1613,16 @@ export interface TelegramSettingsResponse {
   profileId: string;
 }
 
+export interface TelegramAccessRequestsResponse {
+  allowedUsernames: Record<string, string>;
+  botUsername: string | null;
+  requests: Array<{
+    requestedAt: string;
+    userId: number;
+    username: string | null;
+  }>;
+}
+
 export interface UpdateTelegramSettingsRequest {
   allowedUserIds?: string;
   botToken?: string;
