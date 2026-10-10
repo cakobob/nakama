@@ -567,9 +567,11 @@ export class WorkerManagerService {
       this.pm2Module = pm2;
 
       return pm2;
-    } catch {
+    } catch (error) {
+      const reason = error instanceof Error ? `: ${error.message}` : "";
+
       throw new Error(
-        "PM2 is not available. Install it with: npm install -g pm2"
+        `PM2 is not available. Install it with: npm install -g pm2${reason}`
       );
     }
   }
@@ -1267,9 +1269,12 @@ export class WorkerManagerService {
     };
   }
 
-  private pm2UnavailableInfo(): WorkerProcessInfo {
+  private pm2UnavailableInfo(message: string): WorkerProcessInfo {
+    console.warn(`PM2 unavailable: ${message}`);
+
     return {
       cpuPercent: null,
+      error: message,
       managed: false,
       memoryMb: null,
       status: null,
@@ -1290,8 +1295,8 @@ export class WorkerManagerService {
       const match = list.find((p) => p.name === this.processName(name, orgId));
 
       return this.pm2ProcessToInfo(match);
-    } catch {
-      return this.pm2UnavailableInfo();
+    } catch (error) {
+      return this.pm2UnavailableInfo(describeError(error));
     }
   }
 
@@ -1310,11 +1315,11 @@ export class WorkerManagerService {
           return [name, this.pm2ProcessToInfo(match)];
         })
       );
-    } catch {
+    } catch (error) {
       return Object.fromEntries(
         [...VALID_WORKERS, ...this.pluginWorkers.keys()].map((name) => [
           name,
-          this.pm2UnavailableInfo(),
+          this.pm2UnavailableInfo(describeError(error)),
         ])
       );
     }
@@ -1524,8 +1529,17 @@ function getPlatformWorkerName(name: string): PlatformWorkerName {
   throw new Error(`Unknown worker: ${name}`);
 }
 
+function describeError(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 function readChannelPlatform(name: string): ChannelPlatform {
-  if (name === "discord" || name === "telegram" || name === "whatsapp") {
+  if (
+    name === "discord" ||
+    name === "slack" ||
+    name === "telegram" ||
+    name === "whatsapp"
+  ) {
     return name;
   }
 

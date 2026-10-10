@@ -9,6 +9,7 @@ import { toast } from "@nakama/ui/toast";
 import { cn } from "@nakama/ui/utils";
 import {
   Loading03Icon,
+  MoreHorizontalIcon,
   PlayIcon,
   Rotate02Icon,
   ScrollIcon,
@@ -67,45 +68,154 @@ function ActionGlyph({
   );
 }
 
-function WorkerActionsMenu({
+function DisconnectMenu({
   busy,
-  running,
-  showLogs,
-  onAction,
-  onViewLogs,
+  onDisconnect,
 }: {
   busy: boolean;
-  running: boolean;
-  showLogs: boolean;
-  onAction: () => void;
-  onViewLogs: () => void;
+  onDisconnect: () => void;
 }) {
-  if (!(running || showLogs)) {
-    return null;
-  }
-
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button disabled={busy} size="sm" variant="outline" />}
+        render={
+          <Button
+            aria-label="More actions"
+            disabled={busy}
+            size="sm"
+            variant="outline"
+          />
+        }
       >
-        {busy ? "Working…" : "More"}
+        <MoreHorizontalIcon aria-hidden className="size-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {running ? (
-          <DropdownMenuItem onClick={onAction}>Restart</DropdownMenuItem>
-        ) : null}
-        {showLogs ? (
-          <DropdownMenuItem onClick={onViewLogs}>View logs</DropdownMenuItem>
-        ) : null}
+        <DropdownMenuItem onClick={onDisconnect} variant="destructive">
+          Disconnect
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function Pm2Unavailable({
+  className,
+  error,
+}: {
+  className?: string;
+  error?: string;
+}) {
+  return (
+    <span
+      className={cn("text-muted-foreground text-xs", className)}
+      title={error}
+    >
+      {error ? `PM2 not available: ${error}` : "PM2 not available"}
+    </span>
+  );
+}
+
+function RunningActions({
+  compact,
+  disabled,
+  onRestart,
+  onStop,
+  restarting,
+  stopping,
+}: {
+  compact: boolean;
+  disabled: boolean;
+  onRestart: () => void;
+  onStop: () => void;
+  restarting: boolean;
+  stopping: boolean;
+}) {
+  return (
+    <>
+      {compact ? null : (
+        <Button
+          aria-busy={stopping}
+          className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          disabled={disabled}
+          onClick={onStop}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          <ActionGlyph busy={stopping} icon={StopIcon} />
+          Stop
+        </Button>
+      )}
+      <Button
+        aria-busy={restarting}
+        disabled={disabled}
+        onClick={onRestart}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        <ActionGlyph busy={restarting} icon={Rotate02Icon} />
+        Restart
+      </Button>
+    </>
+  );
+}
+
+function StartAction({
+  compact,
+  disabled,
+  onStart,
+  starting,
+}: {
+  compact: boolean;
+  disabled: boolean;
+  onStart: () => void;
+  starting: boolean;
+}) {
+  return (
+    <Button
+      aria-busy={starting}
+      disabled={disabled}
+      onClick={onStart}
+      size="sm"
+      type="button"
+      variant={compact ? "default" : "outline"}
+    >
+      <ActionGlyph
+        busy={starting}
+        icon={PlayIcon}
+        iconClassName="translate-x-px"
+      />
+      Start
+    </Button>
+  );
+}
+
+function ViewLogsButton({
+  compact,
+  onClick,
+}: {
+  compact: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      className={compact ? undefined : "ml-auto"}
+      onClick={onClick}
+      size="sm"
+      type="button"
+      variant={compact ? "outline" : "ghost"}
+    >
+      <ScrollIcon aria-hidden className="size-3.5" strokeWidth={2} />
+      View logs
+    </Button>
   );
 }
 
 export function WorkerActionBar({
   running,
   pm2Managed,
+  pm2Error,
   workerName,
   className,
   showLogs = true,
@@ -113,6 +223,7 @@ export function WorkerActionBar({
 }: {
   running: boolean;
   pm2Managed: boolean;
+  pm2Error?: string;
   workerName: string;
   className?: string;
   showLogs?: boolean;
@@ -130,104 +241,57 @@ export function WorkerActionBar({
   const restarting = restartWorker.isPending;
   const isBusy = starting || stopping || restarting || disconnect.isPending;
 
+  const disconnectWorker = () =>
+    disconnect.mutate(workerName, {
+      onError: (error) => toast(error.message),
+    });
+
   if (!pm2Managed) {
-    return (
-      <span className={cn("text-muted-foreground text-xs", className)}>
-        PM2 not available
-      </span>
-    );
+    return <Pm2Unavailable className={className} error={pm2Error} />;
   }
 
   return (
     <>
       <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
         {running ? (
-          compact ? null : (
-            <>
-              <Button
-                aria-busy={stopping}
-                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                disabled={isBusy}
-                onClick={() => stopWorker.mutate(workerName)}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                <ActionGlyph busy={stopping} icon={StopIcon} />
-                Stop
-              </Button>
-              <Button
-                aria-busy={restarting}
-                disabled={isBusy}
-                onClick={() => restartWorker.mutate(workerName)}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                <ActionGlyph busy={restarting} icon={Rotate02Icon} />
-                Restart
-              </Button>
-            </>
-          )
-        ) : (
-          <Button
-            aria-busy={starting}
+          <RunningActions
+            compact={compact}
             disabled={isBusy}
-            onClick={() =>
+            onRestart={() => restartWorker.mutate(workerName)}
+            onStop={() => stopWorker.mutate(workerName)}
+            restarting={restarting}
+            stopping={stopping}
+          />
+        ) : (
+          <StartAction
+            compact={compact}
+            disabled={isBusy}
+            onStart={() =>
               startWorker.mutate(workerName, {
                 onError: (error) => toast(error.message),
               })
             }
-            size="sm"
-            type="button"
-            variant={compact ? "default" : "outline"}
-          >
-            <ActionGlyph
-              busy={starting}
-              icon={PlayIcon}
-              iconClassName="translate-x-px"
-            />
-            Start
-          </Button>
+            starting={starting}
+          />
         )}
-        {ownerProfileId ? (
+        {ownerProfileId && !compact ? (
           <Button
             disabled={isBusy}
-            onClick={() =>
-              disconnect.mutate(workerName, {
-                onError: (error) => toast(error.message),
-              })
-            }
+            onClick={disconnectWorker}
             size="sm"
             variant="ghost"
           >
             Disconnect
           </Button>
         ) : null}
-        {compact ? (
-          <WorkerActionsMenu
-            busy={isBusy}
-            onAction={() => {
-              const mutation = running ? restartWorker : startWorker;
-              mutation.mutate(workerName, {
-                onError: (error) => toast(error.message),
-              });
-            }}
-            onViewLogs={() => setLogDialogOpen(true)}
-            running={running}
-            showLogs={showLogs}
-          />
-        ) : showLogs ? (
-          <Button
-            className="ml-auto"
+        {showLogs ? (
+          <ViewLogsButton
+            compact={compact}
             onClick={() => setLogDialogOpen(true)}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            <ScrollIcon aria-hidden className="size-3.5" strokeWidth={2} />
-            View logs
-          </Button>
+          />
+        ) : null}
+        {ownerProfileId && compact ? (
+          <DisconnectMenu busy={isBusy} onDisconnect={disconnectWorker} />
         ) : null}
       </div>
       {showLogs ? (
